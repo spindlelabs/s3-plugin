@@ -86,11 +86,6 @@ public final class S3BucketPublisher extends Recorder implements Describable<Pub
                            BuildListener listener)
             throws InterruptedException, IOException {
 
-        if (build.getResult() == Result.FAILURE) {
-            // build failed. don't post
-            return true;
-        }
-
         S3Profile profile = getProfile();
         if (profile == null) {
             log(listener.getLogger(), "No S3 profile is configured.");
