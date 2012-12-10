@@ -22,6 +22,7 @@ import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -86,7 +87,7 @@ public final class S3BucketPublisher extends Recorder implements Describable<Pub
                            BuildListener listener)
             throws InterruptedException, IOException {
 
-        S3Profile profile = getProfile();
+        final S3Profile profile = getProfile();
         if (profile == null) {
             log(listener.getLogger(), "No S3 profile is configured.");
             build.setResult(Result.UNSTABLE);
@@ -108,10 +109,35 @@ public final class S3BucketPublisher extends Recorder implements Describable<Pub
                     if (error != null)
                         log(listener.getLogger(), error);
                 }
-                String bucket = Util.replaceMacro(entry.bucket, envVars);
-                for (FilePath src : paths) {
-                    log(listener.getLogger(), "bucket=" + bucket + ", file=" + src.getName());
-                    profile.upload(bucket, src);
+                final String bucket = Util.replaceMacro(entry.bucket, envVars);
+                ExecutorService executorService = Executors.newFixedThreadPool(paths.length);
+                try {
+                    List<Future<Exception>> futures = new ArrayList<Future<Exception>>();
+                    for (final FilePath src : paths) {
+                        log(listener.getLogger(), "bucket=" + bucket + ", file=" + src.getName());
+                        futures.add(
+                        executorService.submit(new Callable<Exception>() {
+                            public Exception call() {
+                                try {
+                                    profile.upload(bucket, src);
+                                    return null;
+                                } catch (Exception e) {
+                                    return e;
+                                }
+                            }
+                        }));
+                    }
+                    for (final Future<Exception> future : futures) {
+                        try {
+                            Exception exceptionCandidate = future.get();
+                            if (exceptionCandidate != null)
+                                throw new IOException(exceptionCandidate);
+                        } catch (ExecutionException e) {
+                            throw new IOException(e);
+                        }
+                    }
+                } finally {
+                    executorService.shutdown();
                 }
             }
         } catch (IOException e) {
